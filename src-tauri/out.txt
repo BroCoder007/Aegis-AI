@@ -1,0 +1,14 @@
+    Checking tauri v2.10.3
+   Compiling app v0.1.0 (C:\Projects\Aegis AI\src-tauri)
+error: failed to run custom build command for `app v0.1.0 (C:\Projects\Aegis AI\src-tauri)`
+
+Caused by:
+  process didn't exit successfully: `C:\Projects\Aegis AI\src-tauri\target\debug\build\app-96e086ad5a01bfc4\build-script-build` (exit code: 1)
+  --- stdout
+  cargo:rerun-if-env-changed=TAURI_CONFIG
+  cargo:rustc-check-cfg=cfg(desktop)
+  cargo:rustc-cfg=desktop
+  cargo:rustc-check-cfg=cfg(mobile)
+  cargo:rerun-if-changed=C:\Projects\Aegis AI\src-tauri\tauri.conf.json
+  invalid port number: "http://localhost:3000http://localhost:5173"
+warning: build failed, waiting for other jobs to finish...
