@@ -1,73 +1,47 @@
-# React + TypeScript + Vite
+<div align="center">
+  <h1>🛡️ Aegis AI</h1>
+  <h3>Enterprise-Grade Local Threat Intelligence & Deep Static Analysis Sandbox</h3>
+</div>
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Aegis AI is an Open-Source, lightning-fast application designed to statically dissect potentially malicious Windows executables safely. It utilizes a **Hybrid Architecture** marrying blazing-fast Rust deterministic scraping with cutting-edge Local Large Language Model synthesis to produce pinpoint accurate threat profiles.
 
-Currently, two official plugins are available:
+Best of all? **It is engineered to run 100% locally on your machine.** You do not need to upload your sensitive payloads or unreleased proprietary software to the cloud for analysis.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- **The Native Bouncer (Rust):** Natively intercepts the uploaded payload using the `goblin` crate, physically slicing through PE Headers to extract dangerous `Syscalls` and heuristically scraping thousands of strings for embedded network callbacks without ever actually detonating the malware.
+- **The Intelligent Detective (Ollama/DeepSeek):** Aegis AI orchestrates the telemetry out to a local Ollama reasoning model instance. The LLM consumes the "Bouncer Flags" and constructs an enterprise-grade Cyber Threat Assessment report correlating the behavior algorithms.
+- **SQLite Database Persistence:** Integrated completely locally. Aegis maps all scans asynchronously directly to an invisible AppData vault, granting you immediate access to historical artifacts natively.
+- **VirusTotal Inter-linking:** Contains an optional `reqwest` hook. Plug in your private VT API Key to immediately cross-reference the SHA-256 binary hash with 70+ cybersecurity vendors globally.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Setup & Installation
 
-## Expanding the ESLint configuration
+### Requirements
+- **Ollama**: You must have a local instance of Ollama running on your machine on port `http://localhost:11434`. Please download the `deepseek-r1:32b` or `llama3.8b` models ahead of time via:
+  ```bash
+  ollama pull deepseek-r1:32b
+  ```
+- **Node.js** (v18+)
+- **Rust & Cargo** 
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Running Locally
+1. Clone down the repository:
+   ```bash
+   git clone https://github.com/BroCoder007/aegis-ai.git
+   cd aegis-ai
+   ```
+2. Install the necessary JavaScript GUI dependencies:
+   ```bash
+   npm install
+   ```
+3. Boot the application using the Tauri CLI wrapper:
+   ```bash
+   npm run tauri dev
+   ```
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+## Contributing
+We openly welcome additions to the underlying Rust Heuristic Scanning patterns or beautiful React UI re-tooling. 
+Please read our [Contributing Guidelines](CONTRIBUTING.md) for specifics on how to build and expand upon the core orchestrator safely.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Disclaimer
+This tool is built for independent malware analysts, reverse engineers, and developers scanning suspicious droppers. Aegis AI statically analyzes file properties but does not actively replace your primary host Antivirus system.
