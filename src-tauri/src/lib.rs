@@ -17,6 +17,7 @@ pub struct AppState {
 #[tauri::command]
 async fn start_scan(
     file_path: String,
+    scan_mode: String,
     state: State<'_, AppState>,
     app_handle: AppHandle,
 ) -> Result<String, String> {
@@ -30,6 +31,7 @@ async fn start_scan(
     let scans_clone = state.scans.clone();
     let scan_id_clone = scan_id.clone();
     let file_path_clone = file_path.clone();
+    let scan_mode_clone = scan_mode.clone();
     
     tokio::spawn(async move {
         let telemetry = orchestrator::simulate_sandbox_execution(&file_path_clone).await;
@@ -37,7 +39,7 @@ async fn start_scan(
         let vt_report = threat_intel::check_hash(&telemetry.sha256_hash).await;
         
         let mut scans = scans_clone.lock().await;
-        match ai_pipeline::evaluate_telemetry(&telemetry, vt_report).await {
+        match ai_pipeline::evaluate_telemetry(&telemetry, vt_report, &scan_mode_clone).await {
             Ok(report) => {
                 // Log seamlessly to SQLite
                 let _ = database::insert_scan(&app_handle, &scan_id_clone, &file_path_clone, report.risk_score, &report.threat_categories);

@@ -13,8 +13,22 @@ pub struct ThreatAnalysisReport {
 }
 
 /// Evaluates raw telemetry using an LLM.
-pub async fn evaluate_telemetry(telemetry: &TelemetryData, vt_report: Option<crate::threat_intel::VTReport>) -> Result<ThreatAnalysisReport, String> {
+/// `scan_mode` controls which model is used:
+///   - "fast" → Qwen2.5:14B-Instruct (GPU-optimized, ~20 tok/s)
+///   - "deep" → Qwen2.5:32B-Instruct (CPU+GPU, thorough analysis)
+pub async fn evaluate_telemetry(
+    telemetry: &TelemetryData,
+    vt_report: Option<crate::threat_intel::VTReport>,
+    scan_mode: &str,
+) -> Result<ThreatAnalysisReport, String> {
     
+    let (model_name, model_label) = match scan_mode {
+        "deep" => ("qwen2.5:32b-instruct", "Qwen2.5-32B Deep"),
+        _      => ("qwen2.5:14b-instruct", "Qwen2.5-14B Fast"),
+    };
+
+    log::info!("AI Pipeline: Using model '{}' ({})", model_name, model_label);
+
     let mut vt_string = String::new();
     if let Some(vt) = vt_report {
         vt_string = format!(
@@ -46,11 +60,13 @@ pub async fn evaluate_telemetry(telemetry: &TelemetryData, vt_report: Option<cra
 
     let client = reqwest::Client::new();
 
+    // Both Qwen2.5 Instruct models support native JSON enforcement
+    // (no CoT <think> token issue like DeepSeek R1 had).
     let payload = serde_json::json!({
-        "model": "deepseek-r1:32b",
+        "model": model_name,
         "prompt": prompt,
-        "stream": false
-        // Removed "format": "json" because it destroys DeepSeek R1's ability to output <think> tokens, ruining its intelligence.
+        "stream": false,
+        "format": "json"
     });
 
     let res = client
@@ -71,7 +87,7 @@ pub async fn evaluate_telemetry(telemetry: &TelemetryData, vt_report: Option<cra
         .as_str()
         .ok_or_else(|| "Ollama API response did not contain a 'response' string field.".to_string())?;
 
-    // DeepSeek R1 outputs <think>...</think> reasoning blocks before its JSON. We extract only the JSON.
+    // Safety-net fallback: extract JSON substring in case the model wraps output in extra text.
     let json_start = generated_text.find('{').unwrap_or(0);
     let json_end = generated_text.rfind('}').unwrap_or(generated_text.len().saturating_sub(1));
     

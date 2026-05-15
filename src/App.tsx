@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Dropzone } from "./components/Dropzone";
-import { Activity, ShieldAlert, Cpu, AlertTriangle, Crosshair } from "lucide-react";
+import { Activity, ShieldAlert, Cpu, AlertTriangle, Crosshair, Zap, Microscope } from "lucide-react";
 import { motion } from "framer-motion";
 
 interface ScanReport {
@@ -27,6 +27,7 @@ export function App() {
   const [history, setHistory] = useState<ScanHistoryItem[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [scanMode, setScanMode] = useState<"fast" | "deep">("fast");
 
   const fetchHistory = () => {
     invoke<ScanHistoryItem[]>("get_scan_history")
@@ -118,8 +119,41 @@ export function App() {
           </p>
         </header>
 
+        {/* Scan Mode Toggle */}
+        <section className="mb-6">
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500 font-semibold uppercase tracking-wider">Engine Mode:</span>
+            <div className="flex rounded-lg border border-gray-700 overflow-hidden">
+              <button
+                onClick={() => setScanMode("fast")}
+                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all ${
+                  scanMode === "fast"
+                    ? "bg-emerald-500/20 text-emerald-400 border-r border-emerald-500/30"
+                    : "bg-gray-800 text-gray-400 hover:bg-gray-750 border-r border-gray-700"
+                }`}
+              >
+                <Zap className="w-4 h-4" />
+                Fast Scan
+                <span className="text-[10px] opacity-60 font-mono">14B</span>
+              </button>
+              <button
+                onClick={() => setScanMode("deep")}
+                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all ${
+                  scanMode === "deep"
+                    ? "bg-purple-500/20 text-purple-400"
+                    : "bg-gray-800 text-gray-400 hover:bg-gray-750"
+                }`}
+              >
+                <Microscope className="w-4 h-4" />
+                Deep Scan
+                <span className="text-[10px] opacity-60 font-mono">32B</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
         <section className="mb-12">
-          <Dropzone onScanStart={handleScanStart} />
+          <Dropzone onScanStart={handleScanStart} scanMode={scanMode} />
         </section>
 
         {activeScanId && (
@@ -146,7 +180,9 @@ export function App() {
                 >
                   <Cpu className="w-12 h-12 text-blue-500 opacity-50" />
                 </motion.div>
-                <p className="text-gray-400 animate-pulse text-lg tracking-wide">Executing Hybrid Evaluation...</p>
+                <p className="text-gray-400 animate-pulse text-lg tracking-wide">
+                  {scanMode === "deep" ? "🔬 Deep Analysis via Qwen 32B..." : "⚡ Fast Scan via Qwen 14B..."}
+                </p>
               </div>
             ) : report ? (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

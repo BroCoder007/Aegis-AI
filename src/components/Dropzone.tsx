@@ -5,9 +5,10 @@ import { invoke } from '@tauri-apps/api/core';
 
 interface DropzoneProps {
   onScanStart: (scanId: string, fileName: string) => void;
+  scanMode: string;
 }
 
-export function Dropzone({ onScanStart }: DropzoneProps) {
+export function Dropzone({ onScanStart, scanMode }: DropzoneProps) {
   const [isDragActive, setIsDragActive] = useState(false);
   const [isError, setIsError] = useState('');
 
@@ -38,13 +39,13 @@ export function Dropzone({ onScanStart }: DropzoneProps) {
         // In a real app we would use tauri-plugin-dialog or tauri window events.
         const mockPath = `C:\\Users\\Mock\\Downloads\\${file.name}`;
         
-        const scanId: string = await invoke('start_scan', { filePath: mockPath });
+        const scanId: string = await invoke('start_scan', { filePath: mockPath, scanMode });
         onScanStart(scanId, file.name);
       } catch (err) {
          setIsError(String(err));
       }
     }
-  }, [onScanStart]);
+  }, [onScanStart, scanMode]);
 
   const triggerFileInput = () => {
     const el = document.getElementById('file-upload') as HTMLInputElement;
@@ -57,7 +58,7 @@ export function Dropzone({ onScanStart }: DropzoneProps) {
       const file = e.target.files[0];
       try {
         const mockPath = `C:\\Users\\Mock\\Downloads\\${file.name}`;
-        const scanId: string = await invoke('start_scan', { filePath: mockPath });
+        const scanId: string = await invoke('start_scan', { filePath: mockPath, scanMode });
         onScanStart(scanId, file.name);
       } catch (err) {
          setIsError(String(err));
