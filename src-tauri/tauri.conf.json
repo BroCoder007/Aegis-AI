@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "aegis_ai",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "io.github.brocoder007.aegis",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,15 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "Aegis AI Dashboard",
-        "width": 800,
-        "height": 600,
+        "title": "Aegis AI \u2014 Local File Triage",
+        "width": 1100,
+        "height": 800,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {
