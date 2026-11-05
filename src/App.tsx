@@ -1,279 +1,30 @@
-import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { Dropzone } from "./components/Dropzone";
-import { Activity, ShieldAlert, Cpu, AlertTriangle, Crosshair, Zap, Microscope } from "lucide-react";
-import { motion } from "framer-motion";
-
-interface ScanReport {
-  risk_score: number;
-  threat_categories: string[];
-  plain_english_explanation: string;
-  bouncer_yara: string[];
-  bouncer_behavioral: string[];
+import {useEffect,useState} from 'react';
+import {invoke} from '@tauri-apps/api/core';
+import './App.css';
+type Config={provider:string;endpoint:string;model:string};
+type Verdict={status:string;detail:string};
+type VaultEntry={id:string;original:string;state:string;sha256:string};
+type Monitor={running:boolean;checked:number;dropped:number;events:string[]};
+type FileReport={signature:Verdict|null;path:string;sha256:string|null;bytes:number;findings:string[];error:string|null};
+type Snapshot={id:string;state:string;inspected:number;skipped:number;entries:number;total:number;results:FileReport[];errors:string[];ai:string|null;report_path:string|null};
+type Health={total_memory:number;available_memory:number;suggestions:string[];disks:[string,number,number][]};
+export default function App(){
+ const [roots,setRoots]=useState<string[]>([]),[config,setConfig]=useState<Config>({provider:'ollama',endpoint:'http://127.0.0.1:11434',model:''}),[models,setModels]=useState<string[]>([]),[useAI,setAI]=useState(false),[maxFiles,setMaxFiles]=useState(10000),[maxMB,setMaxMB]=useState(128),[scan,setScan]=useState<Snapshot|null>(null),[offset,setOffset]=useState(0),[error,setError]=useState(''),[health,setHealth]=useState<Health|null>(null),[pending,setPending]=useState(false);
+ const [engineEnabled,setEngineEnabled]=useState(false),[engineAddress,setEngineAddress]=useState('127.0.0.1:3310'),[engineInfo,setEngineInfo]=useState('Not checked'),[vaultEntries,setVault]=useState<VaultEntry[]>([]),[monitor,setMonitor]=useState<Monitor>({running:false,checked:0,dropped:0,events:[]});
+ const engine=engineEnabled?{address:engineAddress}:null;
+ async function refreshVault(){try{setVault(await invoke<VaultEntry[]>('quarantine_list'));}catch(e){setError(String(e));}}
+ const busy=pending || ['scanning','ai_analysis'].includes(scan?.state||'');
+ useEffect(()=>{let alive=true;const read=()=>{invoke<Monitor>('monitor_status').then(r=>{if(alive)setMonitor(r)}).catch(()=>{});return invoke<Snapshot|null>('scan_status',{offset}).then(r=>{if(alive)setScan(r)}).catch(e=>{if(alive)setError(String(e))});};read();const timer=setInterval(read,1500);return()=>{alive=false;clearInterval(timer)}},[offset]);
+ async function pick(folder:boolean){try{const path=await invoke<string|null>('pick_target',{folder});if(path)setRoots([path]);}catch(e){setError(String(e));}}
+ async function start(){setPending(true);setError('');setOffset(0);try{await invoke('start_scan',{roots,maxFiles,maxMb:maxMB,ai:useAI?config:null,engine});setScan(await invoke<Snapshot|null>('scan_status',{offset:0}));}catch(e){setError(String(e));}finally{setPending(false);}}
+ async function loadModels(){setError('');try{const found=await invoke<string[]>('list_models',{config});setModels(found);if(found.length)setConfig({...config,model:found[0]});else setError('No installed models returned. Install or load a model in your server first.');}catch(e){setError(String(e));}}
+ return <main><header><span className="eyebrow">AEGIS AI</span><h1>Local file triage & system health</h1><p>Inspect real files, use a local signature engine, and review optional AI explanations.</p></header>
+ <aside className="notice">Keep real-time antivirus enabled. These static indicators and AI explanations cannot prove a file is safe or replace validated antivirus protection. Scans never execute files. Quarantine requires a separate action and native confirmation. Monitoring observes changes; it does not block execution.</aside>
+ {error && <p role="alert" className="error">{error}</p>}
+ <section><h2>1. Select what to inspect</h2><div className="actions"><button disabled={busy} onClick={()=>pick(false)}>Choose file</button><button disabled={busy} onClick={()=>pick(true)}>Choose folder</button><button disabled={busy} onClick={async()=>{try{setRoots(await invoke<string[]>('computer_roots'));}catch(e){setError(String(e));}}}>Select mounted drives</button></div><p className="muted">Folder and drive scans recurse through readable regular files. Links, protected files and limits can leave gaps. Mounted drives can include external or network storage; review the targets below.</p><ul>{roots.map(r=><li key={r}><code>{r}</code> <button className="small" disabled={busy} onClick={()=>setRoots(roots.filter(x=>x!==r))}>Remove</button></li>)}</ul><div className="row"><label>Maximum files<input disabled={busy} type="number" min="1" max="50000" value={maxFiles} onChange={e=>setMaxFiles(Number(e.target.value))}/></label><label>Per-file cap (MiB)<input disabled={busy} type="number" min="1" max="1024" value={maxMB} onChange={e=>setMaxMB(Number(e.target.value))}/></label></div></section>
+ <section><h2>Signature scanning & folder monitoring</h2><label className="check"><input type="checkbox" disabled={busy||monitor.running} checked={engineEnabled} onChange={e=>setEngineEnabled(e.target.checked)}/> Use a local ClamAV daemon for signature detection</label><label>Local clamd address<input disabled={busy||monitor.running} value={engineAddress} onChange={e=>setEngineAddress(e.target.value)}/></label><button onClick={async()=>{try{setEngineInfo(await invoke<string>('engine_status',{config:{address:engineAddress}}));}catch(e){setEngineInfo(String(e));}}}>Check engine & database version</button><p>{engineInfo}</p><p className="muted">Install ClamAV separately and keep its definitions updated with freshclam. A missing or failed engine is reported as an error, not a clean result.</p><div className="actions"><button disabled={!roots.length||monitor.running} onClick={async()=>{try{await invoke('start_monitor',{roots,engine});setMonitor(await invoke<Monitor>('monitor_status'));}catch(e){setError(String(e));}}}>Monitor selected folders</button><button disabled={!monitor.running} onClick={()=>invoke('stop_monitor').catch(e=>setError(String(e)))}>Stop monitoring</button></div><p>{monitor.running?'Monitoring active':'Monitoring off'} · {monitor.checked} change events checked · {monitor.dropped} dropped events</p><p className="muted">Select folders above. Monitoring runs only while Aegis is open, checks changes after they happen, and never automatically quarantines. Dropped events mean coverage gaps.</p><ul>{monitor.events.map((event,i)=><li key={i}>{event}</li>)}</ul></section>
+ <section><h2>2. Optional AI explanation</h2><label className="check"><input disabled={busy} type="checkbox" checked={useAI} onChange={e=>setAI(e.target.checked)}/> Explain scan observations with a local model</label><p className="muted">Static scanning works without AI. Choose any installed model exposed by your local server. Model licenses, hardware needs and any upstream cloud routing are controlled by that server. AI text is unverified advice.</p><div className="row"><label>Server protocol<select disabled={busy} value={config.provider} onChange={e=>{setModels([]);setConfig({provider:e.target.value,endpoint:e.target.value==='ollama'?'http://127.0.0.1:11434':'http://127.0.0.1:1234',model:''});}}><option value="ollama">Ollama</option><option value="compatible">OpenAI-compatible (LM Studio / llama.cpp)</option></select></label><label>Local base URL<input disabled={busy} value={config.endpoint} onChange={e=>setConfig({...config,endpoint:e.target.value})}/></label></div><div className="row"><label>Model<input disabled={busy} list="models" placeholder="Installed model name" value={config.model} onChange={e=>setConfig({...config,model:e.target.value})}/><datalist id="models">{models.map(m=><option key={m} value={m}/>)}</datalist></label><button disabled={busy} onClick={loadModels}>List installed models</button></div><p className="muted">AI receives counts and up to 20 flagged file records, including paths and hashes. File contents are not sent. Model responses are limited and cannot run commands.</p><div className="actions"><button className="primary" disabled={busy||!roots.length||(useAI&&!config.model)} onClick={start}>Start scan</button><button disabled={!busy} onClick={()=>invoke('cancel_scan').catch(e=>setError(String(e)))}>Cancel</button></div></section>
+ {scan&&<section aria-live="polite"><h2>Scan results · {scan.state}</h2><p>{scan.inspected} files processed · {scan.skipped} skipped / errored · {scan.entries} filesystem entries considered</p><p className="muted">“Completed” means the configured traversal ended, not that this computer is malware-free. Heuristics inspect only the first 256 KiB; SHA-256 covers the bytes read within the cap.</p>{scan.errors.map((e,i)=><p className="error" key={i}>{e}</p>)}{scan.ai&&<article><h3>AI explanation — verify before acting</h3><pre>{scan.ai}</pre></article>}{scan.report_path&&<p>Saved JSON report: <code>{scan.report_path}</code></p>}<div className="table"><table><thead><tr><th>File</th><th>Observations</th><th>SHA-256 / error</th></tr></thead><tbody>{scan.results.map((f,i)=><tr key={i}><td>{f.path}<br/><small>{f.bytes.toLocaleString()} bytes read</small></td><td>{f.error?'Not assessed':f.findings.join('; ')||'No listed static indicators observed'}{f.signature&&<p>ClamAV: {f.signature.status} — {f.signature.detail}</p>}</td><td><code>{f.sha256}</code><span className="error">{f.error}</span>{f.sha256&&!f.error&&<button disabled={busy} onClick={async()=>{try{await invoke('quarantine_file',{path:f.path,sha256:f.sha256});await refreshVault();}catch(e){setError(String(e));}}}>Quarantine…</button>}</td></tr>)}</tbody></table></div><div className="actions"><button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-100))}>Previous</button><span>{scan.total ? offset+1 : 0}–{Math.min(offset+100,scan.total)} of {scan.total}</span><button disabled={offset+100>=scan.total} onClick={()=>setOffset(offset+100)}>Next</button></div></section>}
+ <section><h2>Encrypted quarantine</h2><p className="muted">Manual quarantine supports regular files up to 32 MiB on the same volume as the vault. Restoration returns the file to its original path and refuses to overwrite an existing file. Restored files may still be malicious.</p><button onClick={refreshVault}>Refresh quarantine</button><ul>{vaultEntries.map(entry=><li key={entry.id}><code>{entry.original}</code> · {entry.state} <button onClick={async()=>{try{await invoke('quarantine_restore',{id:entry.id});await refreshVault();}catch(e){setError(String(e));}}}>Restore / recover…</button></li>)}</ul></section>
+ <section><h2>System health suggestions</h2><p className="muted">A read-only memory and storage snapshot. Suggestions are advisory; Aegis does not clean files, change startup apps or tune system settings.</p><button onClick={async()=>{try{setHealth(await invoke<Health>('system_health'));}catch(e){setError(String(e));}}}>Check memory & storage</button>{health&&<><p>Available memory: {(health.available_memory/1073741824).toFixed(1)} / {(health.total_memory/1073741824).toFixed(1)} GiB</p><ul>{health.disks.map(([path,free,total])=><li key={path}>{path}: {(free/1073741824).toFixed(1)} GiB free of {(total/1073741824).toFixed(1)} GiB</li>)}</ul><ul>{health.suggestions.map(s=><li key={s}>{s}</li>)}</ul></>}</section></main>
 }
-
-interface ScanHistoryItem {
-  scan_id: string;
-  filename: string;
-  risk_score: number;
-  threat_categories: string;
-  timestamp: string;
-}
-
-export function App() {
-  const [activeScanId, setActiveScanId] = useState<string | null>(null);
-  const [activeScanFileName, setActiveScanFileName] = useState<string>("");
-  const [report, setReport] = useState<ScanReport | null>(null);
-  const [history, setHistory] = useState<ScanHistoryItem[]>([]);
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanError, setScanError] = useState<string | null>(null);
-  const [scanMode, setScanMode] = useState<"fast" | "deep">("fast");
-
-  const fetchHistory = () => {
-    invoke<ScanHistoryItem[]>("get_scan_history")
-      .then((res) => setHistory(res))
-      .catch(console.error);
-  };
-
-  useEffect(() => {
-    fetchHistory();
-  }, []);
-
-  useEffect(() => {
-    if (!activeScanId) return;
-
-    let intervalId: any;
-
-    const checkStatus = async () => {
-      try {
-        const res = await invoke<ScanReport | null>("get_scan_status", { scanId: activeScanId });
-        if (res) {
-          setReport(res);
-          setIsScanning(false);
-          clearInterval(intervalId);
-          fetchHistory(); // Refresh DB history on completion
-        }
-      } catch (e) {
-        setScanError(String(e));
-        setIsScanning(false);
-        clearInterval(intervalId);
-      }
-    };
-
-    setIsScanning(true);
-    setReport(null);
-    setScanError(null);
-    intervalId = setInterval(checkStatus, 1000);
-
-    return () => clearInterval(intervalId);
-  }, [activeScanId]);
-
-  const handleScanStart = (scanId: string, fileName: string) => {
-    setActiveScanId(scanId);
-    setActiveScanFileName(fileName);
-  };
-
-  return (
-    <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
-      {/* Sidebar: Scan History */}
-      <aside className="w-80 bg-gray-900 border-r border-gray-800 p-4 flex flex-col">
-        <div className="flex items-center gap-2 mb-8 font-bold text-xl tracking-tight text-blue-400">
-          <ShieldAlert className="w-6 h-6" />
-          Aegis AI
-        </div>
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">
-          Local Database History
-        </h3>
-        <ul className="space-y-3 overflow-y-auto flex-1 pr-2">
-          {history.length === 0 ? (
-            <li className="text-gray-500 text-sm">No recent scans on disk</li>
-          ) : (
-            history.map((item, index) => (
-              <li
-                key={index}
-                className="text-sm px-4 py-3 bg-gray-800/40 hover:bg-gray-800 rounded-lg cursor-pointer border border-gray-800 hover:border-gray-700 transition flex flex-col gap-2"
-                onClick={() => {
-                   setActiveScanId(item.scan_id);
-                   setActiveScanFileName(item.filename);
-                }}
-              >
-                <div className="flex justify-between items-center w-full">
-                   <strong className="truncate max-w-[150px]" title={item.filename}>{item.filename}</strong>
-                   <span className={`px-2 py-0.5 rounded-sm text-xs font-bold ${item.risk_score > 60 ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}`}>
-                     {item.risk_score} / 100
-                   </span>
-                </div>
-                <div className="text-xs text-gray-500">{new Date(item.timestamp).toLocaleString()}</div>
-              </li>
-            ))
-          )}
-        </ul>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 p-8 flex flex-col overflow-y-auto">
-        <header className="mb-10">
-          <h1 className="text-3xl font-bold mb-2">Sandbox & Analyzer</h1>
-          <p className="text-gray-400">
-            Dynamically evaluate suspicious executables in an isolated environment.
-          </p>
-        </header>
-
-        {/* Scan Mode Toggle */}
-        <section className="mb-6">
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-500 font-semibold uppercase tracking-wider">Engine Mode:</span>
-            <div className="flex rounded-lg border border-gray-700 overflow-hidden">
-              <button
-                onClick={() => setScanMode("fast")}
-                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all ${
-                  scanMode === "fast"
-                    ? "bg-emerald-500/20 text-emerald-400 border-r border-emerald-500/30"
-                    : "bg-gray-800 text-gray-400 hover:bg-gray-750 border-r border-gray-700"
-                }`}
-              >
-                <Zap className="w-4 h-4" />
-                Fast Scan
-                <span className="text-[10px] opacity-60 font-mono">14B</span>
-              </button>
-              <button
-                onClick={() => setScanMode("deep")}
-                className={`flex items-center gap-2 px-5 py-2.5 text-sm font-semibold transition-all ${
-                  scanMode === "deep"
-                    ? "bg-purple-500/20 text-purple-400"
-                    : "bg-gray-800 text-gray-400 hover:bg-gray-750"
-                }`}
-              >
-                <Microscope className="w-4 h-4" />
-                Deep Scan
-                <span className="text-[10px] opacity-60 font-mono">32B</span>
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section className="mb-12">
-          <Dropzone onScanStart={handleScanStart} scanMode={scanMode} />
-        </section>
-
-        {activeScanId && (
-          <section className="border border-gray-800 bg-gray-900 rounded-xl p-6 shadow-2xl">
-            <div className="flex items-center justify-between mb-6 border-b border-gray-800 pb-4">
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                <Activity className="w-5 h-5 text-blue-400" />
-                Deep Analysis Report
-              </h2>
-              <span className="text-sm text-gray-400 bg-gray-950 px-3 py-1 rounded-full border border-gray-800">Target: {activeScanFileName}</span>
-            </div>
-
-            {scanError ? (
-               <div className="flex flex-col items-center justify-center py-12">
-                 <ShieldAlert className="w-12 h-12 text-red-500 mb-4" />
-                 <h3 className="text-xl font-bold text-red-400 mb-2">Scan Failed</h3>
-                 <p className="text-gray-400 max-w-lg text-center break-words">{scanError}</p>
-               </div>
-            ) : isScanning ? (
-              <div className="flex flex-col items-center justify-center py-12 space-y-4">
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-                >
-                  <Cpu className="w-12 h-12 text-blue-500 opacity-50" />
-                </motion.div>
-                <p className="text-gray-400 animate-pulse text-lg tracking-wide">
-                  {scanMode === "deep" ? "🔬 Deep Analysis via Qwen 32B..." : "⚡ Fast Scan via Qwen 14B..."}
-                </p>
-              </div>
-            ) : report ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Risk Gauge */}
-                <div className="col-span-1 flex flex-col items-center p-6 bg-gray-950 rounded-lg border border-gray-800">
-                  <div className="relative w-40 h-40 flex items-center justify-center">
-                    <svg className="w-full h-full -rotate-90">
-                      <circle
-                        className="text-gray-900 stroke-current"
-                        strokeWidth="12"
-                        cx="80"
-                        cy="80"
-                        r="60"
-                        fill="transparent"
-                      ></circle>
-                      <motion.circle
-                        className={`${
-                          report.risk_score > 70
-                            ? "text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]"
-                            : report.risk_score > 30
-                            ? "text-yellow-500"
-                            : "text-green-500"
-                        } stroke-current`}
-                        strokeWidth="12"
-                        strokeLinecap="round"
-                        cx="80"
-                        cy="80"
-                        r="60"
-                        fill="transparent"
-                        strokeDasharray={377}
-                        initial={{ strokeDashoffset: 377 }}
-                        animate={{ strokeDashoffset: 377 - (377 * report.risk_score) / 100 }}
-                        transition={{ duration: 1, ease: "easeOut" }}
-                      ></motion.circle>
-                    </svg>
-                    <div className="absolute text-5xl font-black tracking-tighter">{report.risk_score}</div>
-                  </div>
-                  <p className="mt-6 font-semibold text-gray-500 tracking-wider uppercase">Risk Score</p>
-                </div>
-
-                {/* Details */}
-                <div className="col-span-2 flex flex-col space-y-4">
-                  {/* Bouncer deterministic alerts */}
-                  {(report.bouncer_yara.length > 0 || report.bouncer_behavioral.length > 0) && (
-                     <div className="p-4 bg-gray-950 border border-red-500/20 rounded-lg shadow-inner">
-                        <h4 className="text-sm text-red-500/80 mb-3 font-bold uppercase tracking-wider flex items-center gap-2">
-                           <Crosshair className="w-4 h-4" /> Bouncer Heuristics Triggered
-                        </h4>
-                        <div className="flex flex-col gap-2">
-                          {report.bouncer_behavioral.map((flag, idx) => (
-                             <div key={idx} className="flex items-start gap-2 bg-red-500/5 p-2 rounded border border-red-500/10 text-sm">
-                                <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-                                <span className="text-gray-300">{flag}</span>
-                             </div>
-                          ))}
-                          {report.bouncer_yara.map((yara, idx) => (
-                             <div key={`yara_${idx}`} className="flex items-start gap-2 bg-orange-500/5 p-2 rounded border border-orange-500/10 text-sm">
-                                <Activity className="w-4 h-4 text-orange-400 mt-0.5 flex-shrink-0" />
-                                <span className="text-gray-300 font-mono text-xs pt-0.5">{yara}</span>
-                             </div>
-                          ))}
-                        </div>
-                     </div>
-                  )}
-
-                  <div className="p-5 bg-gray-950 rounded-lg border border-gray-800">
-                    <h4 className="text-sm text-blue-400/80 mb-2 font-bold uppercase tracking-wider">Detective AI Synthesis</h4>
-                    <p className="text-gray-300 leading-relaxed text-sm">{report.plain_english_explanation}</p>
-                  </div>
-
-                  <div className="p-5 bg-gray-950 rounded-lg border border-gray-800">
-                    <h4 className="text-sm text-gray-500 mb-3 font-bold uppercase tracking-wider">Threat Classifications</h4>
-                    <div className="flex flex-wrap gap-2">
-                      {report.threat_categories.map((tc, i) => (
-                        <span
-                          key={i}
-                          className="px-3 py-1 bg-gray-800 text-gray-300 border border-gray-700 rounded-full text-xs font-semibold"
-                        >
-                          {tc}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </section>
-        )}
-      </main>
-    </div>
-  );
-}
-
-export default App;

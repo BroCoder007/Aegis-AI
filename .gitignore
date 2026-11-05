@@ -29,3 +29,7 @@ src-tauri/gen/
 **/*.rs.bk
 .env
 aegis_scans.sqlite
+
+# Evaluation fixtures and Python caches
+__pycache__/
+*.pyc
