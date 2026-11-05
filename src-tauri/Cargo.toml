@@ -28,3 +28,5 @@ hex = "0.4.3"
 
 rfd = "0.15"
 sysinfo = "0.37"
+notify = "8.2"
+aes-gcm = "0.10"

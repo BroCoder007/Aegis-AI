@@ -16,6 +16,7 @@ pub struct FileReport {
     pub bytes: u64,
     pub findings: Vec<String>,
     pub error: Option<String>,
+    pub signature: Option<crate::engine::Verdict>,
 }
 #[derive(Clone, Serialize, Default)]
 pub struct Progress {
@@ -24,6 +25,7 @@ pub struct Progress {
     pub max_files: usize,
     pub max_bytes: u64,
     pub started_unix_seconds: u64,
+    pub engine_version: Option<String>,
     pub state: String,
     pub inspected: usize,
     pub skipped: usize,
@@ -41,6 +43,7 @@ pub fn inspect(path: &Path, limit: u64, cancel: &AtomicBool) -> FileReport {
         bytes: 0,
         findings: vec![],
         error: None,
+        signature: None,
     };
     let result = (|| -> Result<(), String> {
         let mut file = File::open(path).map_err(|e| e.to_string())?;
@@ -138,6 +141,16 @@ pub fn scan(
     progress: Shared,
     cancel: Arc<AtomicBool>,
 ) {
+    scan_with_engine(roots, max_files, max_bytes, progress, cancel, None);
+}
+pub fn scan_with_engine(
+    roots: Vec<String>,
+    max_files: usize,
+    max_bytes: u64,
+    progress: Shared,
+    cancel: Arc<AtomicBool>,
+    engine: Option<crate::engine::EngineConfig>,
+) {
     let mut stack: Vec<_> = roots.into_iter().map(std::path::PathBuf::from).collect();
     let mut seen = std::collections::HashSet::new();
     while let Some(path) = stack.pop() {
@@ -200,10 +213,21 @@ pub fn scan(
                 }
             }
         } else if meta.is_file() {
-            let r = inspect(&path, max_bytes, &cancel);
+            let mut r = inspect(&path, max_bytes, &cancel);
+            if r.error.is_none() {
+                if let Some(config) = &engine {
+                    let mut verdict = crate::engine::scan(config, &path, max_bytes);
+                    if verdict.sha256.is_some() && verdict.sha256 != r.sha256 {
+                        verdict.status = "error".into();
+                        verdict.detail =
+                            "File differs between static and signature scans; repeat scan".into();
+                    }
+                    r.signature = Some(verdict);
+                }
+            }
             let mut p = progress.lock().unwrap();
             p.inspected += 1;
-            if r.error.is_some() {
+            if r.error.is_some() || r.signature.as_ref().is_some_and(|v| v.status == "error") {
                 p.skipped += 1;
             }
             p.results.push(r);

@@ -1,4 +1,7 @@
+mod engine;
 mod models;
+mod monitor;
+mod quarantine;
 mod scanner;
 use scanner::{Progress, Shared};
 use serde::Serialize;
@@ -14,6 +17,7 @@ struct Job {
 #[derive(Default)]
 struct AppState {
     job: Mutex<Option<Job>>,
+    monitor: Mutex<Option<monitor::Monitor>>,
 }
 #[tauri::command]
 async fn pick_target(folder: bool) -> Result<Option<String>, String> {
@@ -46,6 +50,7 @@ fn start_scan(
     max_files: usize,
     max_mb: u64,
     ai: Option<models::ModelConfig>,
+    engine: Option<engine::EngineConfig>,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -94,7 +99,20 @@ fn start_scan(
         let p = progress.clone();
         let c = cancel.clone();
         if let Err(e) = tokio::task::spawn_blocking(move || {
-            scanner::scan(roots, max_files, max_mb * 1024 * 1024, p, c)
+            if let Some(config) = &engine {
+                match engine::version(config) {
+                    Ok(version) => p.lock().unwrap().engine_version = Some(version),
+                    Err(error) => {
+                        let mut snapshot = p.lock().unwrap();
+                        snapshot.state = "failed".into();
+                        snapshot.errors.push(format!(
+                            "Signature engine unavailable; scan not started: {error}"
+                        ));
+                        return;
+                    }
+                }
+            }
+            scanner::scan_with_engine(roots, max_files, max_mb * 1024 * 1024, p, c, engine)
         })
         .await
         {
@@ -103,7 +121,7 @@ fn start_scan(
             p.errors.push(e.to_string());
         }
         if let Some(config) = ai {
-            if !cancel.load(Ordering::Relaxed) {
+            if !cancel.load(Ordering::Relaxed) && progress.lock().unwrap().state != "failed" {
                 let (evidence, previous) = {
                     let mut p = progress.lock().unwrap();
                     let previous = p.state.clone();
@@ -201,6 +219,75 @@ struct Health {
 async fn system_health() -> Result<Health, String> {
     tokio::task::spawn_blocking(||{let mut s=sysinfo::System::new();s.refresh_memory();let mut suggestions=vec!["Review startup apps in system settings; disable only items you recognize and do not need.".into(),"Install OS and browser updates, and keep your existing real-time antivirus enabled.".into(),"Check Task Manager or Activity Monitor for sustained resource usage before changing settings.".into()];if s.available_memory()<s.total_memory()/5{suggestions.push("Available memory is below 20%; consider closing unused applications before loading a large local model.".into());}let disks=sysinfo::Disks::new_with_refreshed_list().iter().map(|d|{if d.available_space()<d.total_space()/10{suggestions.push(format!("{} has under 10% free space; review storage settings and back up important files before deleting anything.",d.mount_point().display()));}(d.mount_point().display().to_string(),d.available_space(),d.total_space())}).collect();Health{total_memory:s.total_memory(),available_memory:s.available_memory(),suggestions,disks}}).await.map_err(|e|e.to_string())
 }
+
+fn vault(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    Ok(app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("quarantine"))
+}
+#[tauri::command]
+async fn engine_status(config: engine::EngineConfig) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || engine::version(&config))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn quarantine_file(
+    path: String,
+    sha256: String,
+    app: tauri::AppHandle,
+) -> Result<quarantine::Entry, String> {
+    let dir = vault(&app)?;
+    tokio::task::spawn_blocking(move||{if rfd::MessageDialog::new().set_title("Quarantine this file?").set_description(format!("Move this file out of its original location and encrypt it? This may break software.\n\n{path}\n\nOnly proceed after reviewing the detection. No files are moved automatically.")).set_buttons(rfd::MessageButtons::YesNo).show()!=rfd::MessageDialogResult::Yes{return Err("Cancelled".into());}quarantine::put(&dir,std::path::Path::new(&path),&sha256)}).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+fn quarantine_list(app: tauri::AppHandle) -> Result<Vec<quarantine::Entry>, String> {
+    quarantine::list(&vault(&app)?)
+}
+#[tauri::command]
+async fn quarantine_restore(id: String, app: tauri::AppHandle) -> Result<String, String> {
+    let dir = vault(&app)?;
+    tokio::task::spawn_blocking(move||{if rfd::MessageDialog::new().set_title("Restore quarantined file?").set_description("The file may still be malicious. Restore only after verifying the finding. Existing files will not be overwritten.").set_buttons(rfd::MessageButtons::YesNo).show()!=rfd::MessageDialogResult::Yes{return Err("Cancelled".into());}quarantine::restore(&dir,&id)}).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+fn start_monitor(
+    roots: Vec<String>,
+    engine: Option<engine::EngineConfig>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut slot = state.monitor.lock().map_err(|e| e.to_string())?;
+    if slot
+        .as_ref()
+        .is_some_and(|m| m.status.lock().unwrap().running)
+    {
+        return Err("Stop the existing monitor first".into());
+    }
+    if let Some(config) = &engine {
+        engine::version(config)
+            .map_err(|e| format!("Signature engine unavailable; monitor not started: {e}"))?;
+    }
+    *slot = Some(monitor::start(roots, engine)?);
+    Ok(())
+}
+#[tauri::command]
+fn stop_monitor(state: State<'_, AppState>) {
+    if let Some(m) = state.monitor.lock().unwrap().as_ref() {
+        m.stop.store(true, Ordering::Relaxed);
+    }
+}
+#[tauri::command]
+fn monitor_status(state: State<'_, AppState>) -> monitor::Status {
+    state
+        .monitor
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|m| m.status.lock().unwrap().clone())
+        .unwrap_or_default()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -212,7 +299,14 @@ pub fn run() {
             start_scan,
             cancel_scan,
             scan_status,
-            system_health
+            system_health,
+            engine_status,
+            quarantine_file,
+            quarantine_list,
+            quarantine_restore,
+            start_monitor,
+            stop_monitor,
+            monitor_status
         ])
         .run(tauri::generate_context!())
         .expect("Failed to start Aegis AI");

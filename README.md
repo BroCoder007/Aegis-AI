@@ -1,8 +1,8 @@
 # Aegis AI
 
-Aegis AI is a read-only desktop file-triage tool with optional local AI explanations and basic memory/storage health suggestions. Select a real file, folder or mounted drive using native dialogs and inspect regular files without executing them.
+Aegis AI is a desktop file-triage tool with optional local ClamAV signature scans, selected-folder monitoring, manual encrypted quarantine, local AI explanations and memory/storage health suggestions. Scans are read-only; manual quarantine deliberately moves a selected file after confirmation. Select a real file, folder or mounted drive using native dialogs and inspect regular files without executing them.
 
-**Keep your existing antivirus enabled.** This project is not a validated antivirus replacement. It has no real-time interception, signature-update service, behavioral sandbox, quarantine, remediation, kernel protection or independent detection evaluation. A file with no listed indicators may still be malicious, and a flagged string can be legitimate. Do not open a suspicious file because an AI explanation sounds reassuring.
+**Keep your existing antivirus enabled.** This project is not a validated antivirus replacement. It does not implement pre-execution interception, its own signature-update service, a behavioral sandbox, automated remediation, kernel protection or independent detection certification. ClamAV definitions and daemon configuration are managed externally. A file with no listed indicators may still be malicious, and a flagged string can be legitimate. Do not open a suspicious file because an AI explanation sounds reassuring.
 
 ## Implemented functionality
 
@@ -12,7 +12,10 @@ Aegis AI is a read-only desktop file-triage tool with optional local AI explanat
 - Skipped links/reparse points, inaccessible files, size-limit failures and files that change during reading are reported rather than labeled safe.
 - Optional AI interpretation using any model name exposed by a local Ollama server or a local OpenAI-compatible chat-completions server, such as LM Studio or llama.cpp.
 - Local JSON reports with target paths, limits, timestamps, hashes, findings, errors and optional AI text.
-- Read-only available-memory and mounted-disk snapshots, with advisory suggestions. No files or system settings are changed.
+- Optional loopback ClamAV INSTREAM scans, with engine/database version captured in the JSON report.
+- Selected-folder change monitoring with a bounded notification queue and visible dropped-event count; no automatic quarantine.
+- Explicitly confirmed AES-256-GCM quarantine and restore with checksum checks and no-overwrite restoration.
+- Read-only available-memory and mounted-disk snapshots, with advisory suggestions. System-health checks do not change files or settings.
 
 ## Prerequisites and running
 
@@ -52,15 +55,15 @@ AI output is plain advisory text. It cannot execute commands, delete files or ch
 
 `completed` means the configured traversal ended, not that the computer is clean. `limited` means the file, directory-entry or pending-path cap was reached. `cancelled` and `failed` scans are incomplete. Directory entries and pending traversal paths are capped at ten times the configured file count. Reports contain all accumulated file results up to the configured cap; this uses memory proportional to those results. Scans are sequential to limit resource usage, not benchmarked for fastest whole-disk throughput. AI analyzes only a small sample of flagged records, not every file.
 
-The scanner hashes any readable regular file within the cap. It does not fully parse PDF/Office documents, unpack archives, emulate code, inspect encrypted files, verify signatures, search memory, inspect boot sectors or obtain administrator-only access. Heuristics only search the preview for a small set of suspicious command/API references, document-like executable extensions and unexpected `MZ` headers. These are contextual observations, not a malware detector with measured sensitivity or specificity. Files changing during a scan may evade a stable assessment; repeat the scan or use established security tooling.
+The scanner hashes any readable regular file within the cap. The built-in static checks do not fully parse PDF/Office documents, unpack archives, emulate code, inspect encrypted files, verify publisher signatures, search memory, inspect boot sectors or obtain administrator-only access. The optional ClamAV engine performs its own format/definition checks under its daemon configuration. Heuristics only search the preview for a small set of suspicious command/API references, document-like executable extensions and unexpected `MZ` headers. These are contextual observations, not a malware detector with measured sensitivity or specificity. Files changing during a scan may evade a stable assessment; repeat the scan or use established security tooling.
 
 ## System health suggestions
 
-**Check memory & storage** reads available RAM and mounted-disk capacity. It flags available memory below 20% and free disk space below 10%, and suggests reviewing startup apps, updates and resource usage through normal operating-system tools. These thresholds are simple indicators, not a diagnosis or a guarantee of improved performance. The app does not automatically clean storage, edit the registry, disable services or change security protections.
+**Check memory & storage** reads available RAM and mounted-disk capacity. It flags available memory below 20% and free disk space below 10%, and suggests reviewing startup apps, updates and resource usage through normal operating-system tools. These thresholds are simple indicators, not a diagnosis or a guarantee of improved performance. The app does not automatically clean storage, edit the registry, disable services or change security protections. Manual quarantine is a separate explicitly confirmed operation.
 
 ## Privacy and credentials
 
-This version has no embedded API credentials and performs no VirusTotal or other reputation-service lookup. A previously hard-coded credential was removed from active source; repository owners should revoke any previously exposed credential because deleting a line does not revoke it or erase Git history. The report files contain local paths and scan evidence: protect them as you would other system records. Do not commit reports or private samples.
+This version has no embedded API credentials and performs no cloud reputation-service lookup. If enabled, file bytes are streamed to the local ClamAV daemon; AI requests still contain only the selected evidence records. A previously hard-coded credential was removed from active source; repository owners should revoke any previously exposed credential because deleting a line does not revoke it or erase Git history. The report files contain local paths and scan evidence: protect them as you would other system records. Do not commit reports or private samples.
 
 ## Tests and troubleshooting
 
@@ -76,3 +79,60 @@ Tests cover real sample-file hashing, byte limits, missing files, folder travers
 - **Some files are skipped:** review permissions, links/reparse points, changing-file errors and configured limits. No automatic privilege escalation occurs.
 - **Nothing works in the browser preview:** use `npm run tauri dev` for native functionality.
 - **A scan finishes with no findings:** this only means none of the implemented preview checks matched; use your antivirus and other trusted tools for protection.
+
+
+## ClamAV signature detection and database updates
+
+Install [ClamAV from its official distribution](https://docs.clamav.net/manual/Installing.html) separately. Aegis connects to a running `clamd` daemon using INSTREAM; it does not install the engine or bundle virus definitions. Follow the official [signature database setup](https://docs.clamav.net/manual/Usage/SignatureManagement.html), configure `freshclam.conf`, and run/schedule `freshclam` to maintain definitions. Configure `clamd.conf` for loopback TCP, for example:
+
+```text
+TCPAddr 127.0.0.1
+TCPSocket 3310
+```
+
+Remove or comment the example configuration's disabling `Example` line where applicable, configure the database directory, and start `clamd` according to your platform's installation instructions. Do not expose this unauthenticated daemon port to the network. Coordinate any service/database configuration with your administrator. ClamAV's own stream, archive and scan limits apply; ensure they suit the app's selected cap. A daemon `OK` response means no known match under that configuration, not that all embedded/archived/encrypted content was inspected.
+
+In Aegis, select **Use a local ClamAV daemon**, enter `127.0.0.1:3310`, and click **Check engine & database version**. Start a scan only after verifying that the engine is available and its definitions are current. A preflight connection failure stops an explicitly requested signature scan. Mid-scan errors stay visible per file; they are not clean verdicts. Responses distinguish `detected`, `no_known_match` and `error`. A static and signature scan with different byte hashes is reported as an error.
+
+This integration's tests use a synthetic protocol fixture, not an installed ClamAV engine or a malware corpus. ClamAV was not installed in this development environment, so real engine/database integration and detection performance remain to be verified.
+
+## Selected-folder monitoring
+
+Choose folders with the native folder picker, configure the optional signature engine, then click **Monitor selected folders**. You may monitor 1–8 folders while Aegis is open. Native filesystem notifications trigger static inspection and, if enabled, local ClamAV scans of created/modified regular files. Canonicalized paths must remain within the selected roots. Symlinks/reparse points and files exceeding 128 MiB are not scanned.
+
+This is change monitoring after an event, **not on-access blocking**. A file may run before an event is processed. Monitoring does not inspect existing files at startup, run as a background OS service, survive application exit, retry all unstable files or prevent access. Perform a separate initial scan. Keep folders focused rather than watching an entire system tree.
+
+Notifications use a 256-event queue, two-second per-path debounce and a single scan worker. The UI retains the last 100 event summaries, scanned-event count and dropped-event count. Debounce can coalesce rapid changes; dropped events or watcher errors indicate coverage gaps. Network volumes, rapidly changing files and OS notification limitations can also leave gaps. Stop monitoring and run an on-demand scan if coverage is uncertain. Stop waits for in-flight I/O/daemon operations; monitoring results are not persisted as a full audit log.
+
+For actual Linux on-access prevention, ClamAV provides the separate privileged [ClamOnAcc facility](https://docs.clamav.net/manual/Usage/Scanning.html#on-access-scanning). Aegis does not configure or replace that facility, and does not provide a Windows minifilter driver or macOS Endpoint Security integration.
+
+## Manual quarantine and recovery
+
+Use **Quarantine…** on a scanned file record only after reviewing the evidence. A native confirmation identifies the file and warns that moving it may break software. This operation is never triggered by AI or monitoring.
+
+The current vault supports regular non-link files up to 32 MiB, on the same volume as the app-local-data vault. It moves the source to a private staging name, checks the hash against the selected scan record, encrypts its contents with AES-256-GCM, and stores metadata and ciphertext under an ID. A changed file is rejected and rollback is attempted without overwriting a newly occupied source path. Cross-volume moves fail rather than silently copying/deleting the source.
+
+Click **Refresh quarantine**, then **Restore / recover…** to review another native confirmation. Restore verifies the encrypted authentication tag and plaintext checksum, and creates the original path only if it does not already exist. The original parent directory must exist. It restores bytes, not the original timestamps, permissions or execution metadata. Restoring a detection does not make it safe to execute.
+
+The vault is under the app-local-data `quarantine` folder. Its `key.bin` is stored locally alongside the vault; protect and back up the entire vault, including the key and manifests. Unix permissions are restricted by the app; Windows uses inherited user-profile permissions. This is not a tamper-resistant or independently audited vault, and it cannot protect against malware already running as your user or administrator.
+
+Interrupted/error operations can retain `.pending` plaintext or partially written encrypted files. Pending entries can be recovered through the restore action when the manifest and checksum are intact. Keep the original vault files if recovery fails; do not delete `key.bin`, staged files or manifests. Power loss, disk failure and concurrent changes are not fully crash-tested. A failed restore may leave a partial newly created destination while retaining the vault copy; inspect that destination before retrying. Listing is limited to 2,000 directory entries. There is no permanent-delete button.
+
+## Reproducible detection evaluation
+
+`tools/evaluate_clamav.py` evaluates a local engine against a labeled manifest you supply. It does not download or execute samples. Use only datasets you may legally handle, in a controlled environment. A manifest is a JSON list with paths relative to the manifest directory (or absolute paths) and ground-truth boolean labels:
+
+```json
+[
+  {"path": "samples/known-benign.txt", "malicious": false}
+]
+```
+
+```bash
+python tools/evaluate_clamav.py labeled-samples.json --port 3310 --max-mib 128 > evaluation.json
+python -m unittest discover -s tools -v
+```
+
+The report records engine/database version, file hashes, responses, true/false positives/negatives, precision, recall among assessed cases and assessment coverage. Failed scans are `unknown`, not negatives. Dataset provenance, reliable labels, representative samples and independent testing are still required to establish detection quality. No accuracy percentage or antivirus-replacement claim has been established here.
+
+Additional Rust tests cover the signature protocol adapter, real local watcher notifications, quarantine round-trip, checksum-change rollback, corrupted-ciphertext rejection and refusal to overwrite an occupied restore path. These fixtures are benign and synthetic; they do not validate protection against live threats.
